@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYC Taxi Analytics Dashboard - Standalone</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>🚕 NYC Taxi Analytics Dashboard<span class="status-indicator connected" id="statusIndicator"></span></h1>
+                <div class="header-subtitle">Real-time Urban Mobility Intelligence</div>
+            </div>
+            <div class="date-filter">
+                <input type="date" id="startDate" value="2024-01-01">
+                <span style="color: #a0a0a0;">to</span>
+                <input type="date" id="endDate" value="2024-01-31">
+                <button id="applyDateBtn">Apply</button>
+            </div>
+        </div>
+
+        <div class="error-message" id="errorMessage"></div>
+
+        <div class="dashboard">
+            <div class="sidebar">
+                <h3>Filters</h3>
+                
+                <div class="filter-group">
+                    <label>Time of Day</label>
+                    <div class="checkbox-group">
+                        <label><input type="checkbox" checked id="timeMorning"> Morning (6AM-12PM)</label>
+                        <label><input type="checkbox" checked id="timeAfternoon"> Afternoon (12PM-6PM)</label>
+                        <label><input type="checkbox" checked id="timeEvening"> Evening (6PM-12AM)</label>
+                        <label><input type="checkbox" checked id="timeNight"> Night (12AM-6AM)</label>
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Fare Range ($)</label>
+                    <input type="range" min="0" max="100" value="100" id="fareRange">
+                    <div class="range-value">$0 - $<span id="fareValue">100</span></div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Trip Distance (miles)</label>
+                    <input type="range" min="0" max="50" value="50" id="distanceRange">
+                    <div class="range-value">0 - <span id="distanceValue">50</span> miles</div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Passenger Count</label>
+                    <select id="passengerFilter">
+                        <option value="all">All</option>
+                        <option value="1">1 Passenger</option>
+                        <option value="2">2 Passengers</option>
+                        <option value="3">3 Passengers</option>
+                        <option value="4">4+ Passengers</option>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>Borough</label>
+                    <select id="boroughFilter">
+                        <option value="all">All Boroughs</option>
+                        <option value="manhattan">Manhattan</option>
+                        <option value="brooklyn">Brooklyn</option>
+                        <option value="queens">Queens</option>
+                        <option value="bronx">Bronx</option>
+                        <option value="staten_island">Staten Island</option>
+                    </select>
+                </div>
+
+                <button class="apply-btn" id="applyFiltersBtn">Apply Filters</button>
+            </div>
+
+            <div class="main-content">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Trips</div>
+                        <div class="kpi-value" id="kpiTotalTrips">-</div>
+                        <div class="kpi-change" id="kpiTotalTripsChange">Loading...</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Avg Trip Duration</div>
+                        <div class="kpi-value" id="kpiAvgDuration">-</div>
+                        <div class="kpi-change" id="kpiAvgDurationChange">Loading...</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Distance</div>
+                        <div class="kpi-value" id="kpiTotalDistance">-</div>
+                        <div class="kpi-change" id="kpiTotalDistanceChange">Loading...</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Avg Fare</div>
+                        <div class="kpi-value" id="kpiAvgFare">-</div>
+                        <div class="kpi-change" id="kpiAvgFareChange">Loading...</div>
+                    </div>
+                </div>
+
+                <div class="chart-container full-width">
+                    <div class="chart-title">Trip Volume Over Time (Hourly Pattern)</div>
+                    <div class="chart-wrapper tall">
+                        <canvas id="timeSeriesChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-grid">
+                    <div class="chart-container">
+                        <div class="chart-title">Average Speed by Time of Day</div>
+                        <div class="chart-wrapper">
+                            <canvas id="speedChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Passenger Distribution</div>
+                        <div class="chart-wrapper">
+                            <canvas id="passengerChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Trip Duration Distribution</div>
+                        <div class="chart-wrapper">
+                            <canvas id="durationChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Distance vs Duration Scatter</div>
+                        <div class="chart-wrapper">
+                            <canvas id="scatterChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="insights-panel">
+                    <h3>Key Insights</h3>
+                    <div id="insightsContainer">
+                        <div class="insight-item">
+                            <h4>Loading insights...</h4>
+                            <p>Please wait while we analyze the data.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // STANDALONE VERSION - LOADS FROM JSON FILES
+        // ============================================
+        
+        const DATA_FILES = {
+            summary: 'data/summary.json',
+            hourly: 'data/trips_hourly.json',
+            speed: 'data/speed_by_time.json',
+            passenger: 'data/passenger_distribution.json',
+            duration: 'data/duration_distribution.json',
+            scatter: 'data/scatter_data.json',
+            insights: 'data/insights.json'
+        };
+
+        let charts = {};
+        const chartColors = {
+            primary: 'rgba(102, 126, 234, 0.8)',
+            secondary: 'rgba(118, 75, 162, 0.8)',
+            success: 'rgba(74, 222, 128, 0.8)',
+            warning: 'rgba(251, 191, 36, 0.8)',
+            danger: 'rgba(248, 113, 113, 0.8)',
+            info: 'rgba(96, 165, 250, 0.8)'
+        };
+
+        // Load JSON file helper
+        async function loadJSONFile(filename) {
+            try {
+                const response = await fetch(filename);
+                if (!response.ok) throw new Error(`Failed to load ${filename}`);
+                return await response.json();
+            } catch (error) {
+                console.error(`Error loading ${filename}:`, error);
+                return null;
+            }
+        }
+
+        // Format number helper
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toString();
+        }
+
+        // Update KPIs
+        function updateKPIs(data) {
+            document.getElementById('kpiTotalTrips').textContent = formatNumber(data.total_trips);
+            document.getElementById('kpiAvgDuration').textContent = `${data.avg_duration}m`;
+            document.getElementById('kpiTotalDistance').textContent = `${formatNumber(data.total_distance)} mi`;
+            document.getElementById('kpiAvgFare').textContent = `$${data.avg_fare.toFixed(2)}`;
+            
+            if (data.changes) {
+                updateChangeIndicator('kpiTotalTripsChange', data.changes.trips);
+                updateChangeIndicator('kpiAvgDurationChange', data.changes.duration);
+                updateChangeIndicator('kpiTotalDistanceChange', data.changes.distance);
+                updateChangeIndicator('kpiAvgFareChange', data.changes.fare);
+            }
+        }
+
+        function updateChangeIndicator(elementId, change) {
+            const element = document.getElementById(elementId);
+            const arrow = change >= 0 ? '↑' : '↓';
+            const color = change >= 0 ? '#4ade80' : '#f87171';
+            element.textContent = `${arrow} ${Math.abs(change).toFixed(1)}% vs last month`;
+            element.style.color = color;
+        }
+
+        // Update insights
+        function updateInsights(insights) {
+            const container = document.getElementById('insightsContainer');
+            container.innerHTML = insights.map(insight => `
+                <div class="insight-item">
+                    <h4>${insight.title}</h4>
+                    <p>${insight.description}</p>
+                </div>
+            `).join('');
+        }
+
+        // Initialize charts
+        function initializeCharts() {
+            charts.timeSeries = new Chart(document.getElementById('timeSeriesChart').getContext('2d'), {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: 'Trips per Hour', data: [], borderColor: chartColors.primary, backgroundColor: 'rgba(102, 126, 234, 0.1)', tension: 0.4, fill: true, pointRadius: 4 }] },
+                options: getChartOptions()
+            });
+
+            charts.speed = new Chart(document.getElementById('speedChart').getContext('2d'), {
+                type: 'bar',
+                data: { labels: [], datasets: [{ label: 'Avg Speed (mph)', data: [], backgroundColor: [chartColors.warning, chartColors.success, chartColors.danger, chartColors.info] }] },
+                options: getChartOptions()
+            });
+
+            charts.passenger = new Chart(document.getElementById('passengerChart').getContext('2d'), {
+                type: 'doughnut',
+                data: { labels: [], datasets: [{ data: [], backgroundColor: [chartColors.primary, chartColors.secondary, chartColors.success, chartColors.warning] }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#e0e0e0', padding: 15 } } } }
+            });
+
+            charts.duration = new Chart(document.getElementById('durationChart').getContext('2d'), {
+                type: 'bar',
+                data: { labels: [], datasets: [{ label: 'Number of Trips', data: [], backgroundColor: chartColors.primary }] },
+                options: getChartOptions()
+            });
+
+            charts.scatter = new Chart(document.getElementById('scatterChart').getContext('2d'), {
+                type: 'scatter',
+                data: { datasets: [{ label: 'Trips', data: [], backgroundColor: chartColors.info, pointRadius: 3 }] },
+                options: getScatterOptions()
+            });
+        }
+
+        function getChartOptions() {
+            return {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#e0e0e0' } } },
+                scales: {
+                    y: { beginAtZero: true, ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                    x: { ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                }
+            };
+        }
+
+        function getScatterOptions() {
+            return {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#e0e0e0' } } },
+                scales: {
+                    y: { title: { display: true, text: 'Duration (min)', color: '#a0a0a0' }, ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                    x: { title: { display: true, text: 'Distance (miles)', color: '#a0a0a0' }, ticks: { color: '#a0a0a0' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                }
+            };
+        }
+
+        function updateChart(chartName, labels, data) {
+            charts[chartName].data.labels = labels;
+            charts[chartName].data.datasets[0].data = data;
+            charts[chartName].update();
+        }
+
+        // Load all data
+        async function loadAllData() {
+            console.log('Loading data from JSON files...');
+            
+            const [summary, hourly, speed, passenger, duration, scatter, insights] = await Promise.all([
+                loadJSONFile(DATA_FILES.summary),
+                loadJSONFile(DATA_FILES.hourly),
+                loadJSONFile(DATA_FILES.speed),
+                loadJSONFile(DATA_FILES.passenger),
+                loadJSONFile(DATA_FILES.duration),
+                loadJSONFile(DATA_FILES.scatter),
+                loadJSONFile(DATA_FILES.insights)
+            ]);
+
+            if (summary) updateKPIs(summary);
+            if (hourly) updateChart('timeSeries', hourly.hours, hourly.counts);
+            if (speed) updateChart('speed', speed.labels, speed.speeds);
+            if (passenger) updateChart('passenger', passenger.labels, passenger.counts);
+            if (duration) updateChart('duration', duration.ranges, duration.counts);
+            if (scatter) {
+                charts.scatter.data.datasets[0].data = scatter.data;
+                charts.scatter.update();
+            }
+            if (insights) updateInsights(insights.insights);
+
+            console.log('✓ Data loaded successfully!');
+        }
+
+        // Event listeners
+        document.getElementById('fareRange').addEventListener('input', (e) => {
+            document.getElementById('fareValue').textContent = e.target.value;
+        });
+
+        document.getElementById('distanceRange').addEventListener('input', (e) => {
+            document.getElementById('distanceValue').textContent = e.target.value;
+        });
+
+        document.getElementById('applyFiltersBtn').addEventListener('click', loadAllData);
+        document.getElementById('applyDateBtn').addEventListener('click', loadAllData);
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('NYC Taxi Dashboard - Standalone Mode');
+            initializeCharts();
+            loadAllData();
+        });
+    </script>
+</body>
+</html>

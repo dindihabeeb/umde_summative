@@ -1,0 +1,156 @@
+CTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYC Taxi Analytics Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>🚕 NYC Taxi Analytics Dashboard<span class="status-indicator disconnected" id="statusIndicator"></span></h1>
+                <div class="header-subtitle">Real-time Urban Mobility Intelligence</div>
+            </div>
+            <div class="date-filter">
+                <input type="date" id="startDate" value="2024-01-01">
+                <span style="color: #a0a0a0;">to</span>
+                <input type="date" id="endDate" value="2024-01-31">
+                <button id="applyDateBtn">Apply</button>
+            </div>
+        </div>
+
+        <div class="error-message" id="errorMessage"></div>
+
+        <div class="dashboard">
+            <div class="sidebar">
+                <h3>Filters</h3>
+                
+                <div class="filter-group">
+                    <label>Time of Day</label>
+                    <div class="checkbox-group">
+                        <label><input type="checkbox" checked id="timeMorning"> Morning (6AM-12PM)</label>
+                        <label><input type="checkbox" checked id="timeAfternoon"> Afternoon (12PM-6PM)</label>
+                        <label><input type="checkbox" checked id="timeEvening"> Evening (6PM-12AM)</label>
+                        <label><input type="checkbox" checked id="timeNight"> Night (12AM-6AM)</label>
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Fare Range ($)</label>
+                    <input type="range" min="0" max="100" value="100" id="fareRange">
+                    <div class="range-value">$0 - $<span id="fareValue">100</span></div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Trip Distance (miles)</label>
+                    <input type="range" min="0" max="50" value="50" id="distanceRange">
+                    <div class="range-value">0 - <span id="distanceValue">50</span> miles</div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Passenger Count</label>
+                    <select id="passengerFilter">
+                        <option value="all">All</option>
+                        <option value="1">1 Passenger</option>
+                        <option value="2">2 Passengers</option>
+                        <option value="3">3 Passengers</option>
+                        <option value="4">4+ Passengers</option>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>Borough</label>
+                    <select id="boroughFilter">
+                        <option value="all">All Boroughs</option>
+                        <option value="manhattan">Manhattan</option>
+                        <option value="brooklyn">Brooklyn</option>
+                        <option value="queens">Queens</option>
+                        <option value="bronx">Bronx</option>
+                        <option value="staten_island">Staten Island</option>
+                    </select>
+                </div>
+
+                <button class="apply-btn" id="applyFiltersBtn">Apply Filters</button>
+            </div>
+
+            <div class="main-content">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Trips</div>
+                        <div class="kpi-value" id="kpiTotalTrips">-</div>
+                        <div class="kpi-change" id="kpiTotalTripsChange">Loading...</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Avg Trip Duration</div>
+                        <div class="kpi-value" id="kpiAvgDuration">-</div>
+                        <div class="kpi-change" id="kpiAvgDurationChange">Loading...</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Distance</div>
+                        <div class="kpi-value" id="kpiTotalDistance">-</div>
+                        <div class="kpi-change" id="kpiTotalDistanceChange">Loading...</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Avg Fare</div>
+                        <div class="kpi-value" id="kpiAvgFare">-</div>
+                        <div class="kpi-change" id="kpiAvgFareChange">Loading...</div>
+                    </div>
+                </div>
+
+                <div class="chart-container full-width">
+                    <div class="chart-title">Trip Volume Over Time (Hourly Pattern)</div>
+                    <div class="chart-wrapper tall">
+                        <canvas id="timeSeriesChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-grid">
+                    <div class="chart-container">
+                        <div class="chart-title">Average Speed by Time of Day</div>
+                        <div class="chart-wrapper">
+                            <canvas id="speedChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Passenger Distribution</div>
+                        <div class="chart-wrapper">
+                            <canvas id="passengerChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Trip Duration Distribution</div>
+                        <div class="chart-wrapper">
+                            <canvas id="durationChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Distance vs Duration Scatter</div>
+                        <div class="chart-wrapper">
+                            <canvas id="scatterChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="insights-panel">
+                    <h3>Key Insights</h3>
+                    <div id="insightsContainer">
+                        <div class="insight-item">
+                            <h4>Loading insights...</h4>
+                            <p>Please wait while we analyze the data.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
