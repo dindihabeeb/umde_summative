@@ -124,20 +124,16 @@ def health_check():
 @app.route('/api/trips', methods=['GET'])
 def get_trips():
     """
-    Retrieves trip data with optional filtering and pagination.
+    Retrieves trip data (from view trip_details) with optional filtering and pagination.
     
     Query Parameters:
         page (int): Page number for pagination (default: 1)
         limit (int): Number of records per page (default: 100, max: 1000)
         vendor_id (int): Filter by vendor ID
-        min_distance (float): Minimum trip distance in miles
-        max_distance (float): Maximum trip distance in miles
         min_duration (int): Minimum trip duration in seconds
         max_duration (int): Maximum trip duration in seconds
         start_date (str): Start date filter (ISO format)
         end_date (str): End date filter (ISO format)
-        is_rush_hour (bool): Filter for rush hour trips
-        is_weekend (bool): Filter for weekend trips
         
     Returns:
         JSON object containing:
@@ -151,47 +147,30 @@ def get_trips():
         500: Server error
     """
     try:
-        # Parse and validate pagination parameters
         page = max(1, int(request.args.get('page', 1)))
         limit = min(1000, max(1, int(request.args.get('limit', 100))))
         offset = (page - 1) * limit
 
-        # Parse optional filter parameters
         vendor_id = request.args.get('vendor_id', type=int)
-        min_distance = request.args.get('min_distance', type=float)
-        max_distance = request.args.get('max_distance', type=float)
         min_duration = request.args.get('min_duration', type=int)
         max_duration = request.args.get('max_duration', type=int)
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
-        is_rush_hour = request.args.get('is_rush_hour')
-        is_weekend = request.args.get('is_weekend')
 
-        # Build base SELECT and COUNT templates
         base_select = """
             SELECT 
-                t.trip_id,
-                v.vendor_name,
-                pt.datetime as pickup_datetime,
-                dt.datetime as dropoff_datetime,
-                pl.longitude as pickup_longitude,
-                pl.latitude as pickup_latitude,
-                dl.longitude as dropoff_longitude,
-                dl.latitude as dropoff_latitude,
-                t.passenger_count,
-                t.trip_duration,
-                tf.trip_distance,
-                tf.trip_speed,
-                tf.trip_efficiency,
-                tf.is_rush_hour,
-                tf.is_weekend
-            FROM trips t
-            JOIN vendors v ON t.vendor_id = v.vendor_id
-            JOIN time_dimensions pt ON t.pickup_time_id = pt.time_id
-            JOIN time_dimensions dt ON t.dropoff_time_id = dt.time_id
-            JOIN locations pl ON t.pickup_location_id = pl.location_id
-            JOIN locations dl ON t.dropoff_location_id = dl.location_id
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
+                trip_id,
+                vendor_id,
+                pickup_datetime,
+                dropoff_datetime,
+                pickup_longitude,
+                pickup_latitude,
+                dropoff_longitude,
+                dropoff_latitude,
+                passenger_count,
+                store_and_fwd_flag,
+                trip_duration
+            FROM trip_details
             WHERE 1=1
         """
 
@@ -200,78 +179,42 @@ def get_trips():
         filters_applied = {}
 
         if vendor_id is not None:
-            where_clauses.append("t.vendor_id = %s")
+            where_clauses.append("vendor_id = %s")
             params.append(vendor_id)
             filters_applied['vendor_id'] = vendor_id
 
-        if min_distance is not None:
-            where_clauses.append("tf.trip_distance >= %s")
-            params.append(min_distance)
-            filters_applied['min_distance'] = min_distance
-
-        if max_distance is not None:
-            where_clauses.append("tf.trip_distance <= %s")
-            params.append(max_distance)
-            filters_applied['max_distance'] = max_distance
-
         if min_duration is not None:
-            where_clauses.append("t.trip_duration >= %s")
+            where_clauses.append("trip_duration >= %s")
             params.append(min_duration)
             filters_applied['min_duration'] = min_duration
 
         if max_duration is not None:
-            where_clauses.append("t.trip_duration <= %s")
+            where_clauses.append("trip_duration <= %s")
             params.append(max_duration)
             filters_applied['max_duration'] = max_duration
 
         if start_date:
-            where_clauses.append("pt.datetime >= %s")
+            where_clauses.append("pickup_datetime >= %s")
             params.append(start_date)
             filters_applied['start_date'] = start_date
 
         if end_date:
-            where_clauses.append("pt.datetime <= %s")
+            where_clauses.append("pickup_datetime <= %s")
             params.append(end_date)
             filters_applied['end_date'] = end_date
 
-        if is_rush_hour is not None:
-            rush_hour_bool = is_rush_hour.lower() in ['true', '1', 'yes']
-            where_clauses.append("tf.is_rush_hour = %s")
-            params.append(int(rush_hour_bool))
-            filters_applied['is_rush_hour'] = rush_hour_bool
+        where_clause_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
 
-        if is_weekend is not None:
-            weekend_bool = is_weekend.lower() in ['true', '1', 'yes']
-            where_clauses.append("tf.is_weekend = %s")
-            params.append(int(weekend_bool))
-            filters_applied['is_weekend'] = weekend_bool
-
-        # Combine where clauses
-        if where_clauses:
-            where_clause_sql = " AND " + " AND ".join(where_clauses)
-        else:
-            where_clause_sql = ""
-
-        # Final queries (MySQL uses same %s placeholders)
-        query = base_select + where_clause_sql + " ORDER BY pt.datetime DESC LIMIT %s OFFSET %s"
+        query = base_select + where_clause_sql + " ORDER BY pickup_datetime DESC LIMIT %s OFFSET %s"
         query_params = params + [limit, offset]
 
-        count_query = "SELECT COUNT(*) as total FROM trips t " \
-                      "JOIN vendors v ON t.vendor_id = v.vendor_id " \
-                      "JOIN time_dimensions pt ON t.pickup_time_id = pt.time_id " \
-                      "JOIN time_dimensions dt ON t.dropoff_time_id = dt.time_id " \
-                      "JOIN locations pl ON t.pickup_location_id = pl.location_id " \
-                      "JOIN locations dl ON t.dropoff_location_id = dl.location_id " \
-                      "LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id " \
-                      "WHERE 1=1" + where_clause_sql
+        count_query = "SELECT COUNT(*) as total FROM trip_details WHERE 1=1" + where_clause_sql
 
-        # Execute main query
         conn = get_db_connection()
-        cursor = conn.cursor()  # DictCursor is set at connection level
+        cursor = conn.cursor()
         cursor.execute(query, query_params)
         trips = cursor.fetchall()
 
-        # Execute count query
         cursor.execute(count_query, params)
         total_count = cursor.fetchone()['total']
 
@@ -389,20 +332,14 @@ def get_overview_statistics():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Updated: removed Postgres ::numeric casts (MySQL compatible)
         query = """
             SELECT 
                 COUNT(*) as total_trips,
-                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
                 ROUND(AVG(t.trip_duration), 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed), 2) as avg_speed,
                 SUM(t.passenger_count) as total_passengers,
-                MIN(pt.datetime) as earliest_trip,
-                MAX(pt.datetime) as latest_trip,
-                ROUND(AVG(tf.trip_efficiency), 3) as avg_efficiency
+                MIN(t.pickup_time) as earliest_trip,
+                MAX(t.pickup_time) as latest_trip
             FROM trips t
-            JOIN time_dimensions pt ON t.pickup_time_id = pt.time_id
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
         """
 
         cursor.execute(query)
@@ -451,17 +388,13 @@ def get_hourly_statistics():
 
         query = """
             SELECT 
-                pt.hour as hour,
+                HOUR(t.pickup_time) as hour,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
                 ROUND(AVG(t.trip_duration), 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed), 2) as avg_speed,
                 ROUND(AVG(t.passenger_count), 1) as avg_passengers
             FROM trips t
-            JOIN time_dimensions pt ON t.pickup_time_id = pt.time_id
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
-            GROUP BY pt.hour
-            ORDER BY pt.hour
+            GROUP BY HOUR(t.pickup_time)
+            ORDER BY hour
         """
 
         cursor.execute(query)
@@ -505,25 +438,22 @@ def get_daily_statistics():
 
         query = """
             SELECT 
-                pt.day_of_week,
-                CASE pt.day_of_week
-                    WHEN 0 THEN 'Monday'
-                    WHEN 1 THEN 'Tuesday'
-                    WHEN 2 THEN 'Wednesday'
-                    WHEN 3 THEN 'Thursday'
-                    WHEN 4 THEN 'Friday'
-                    WHEN 5 THEN 'Saturday'
-                    WHEN 6 THEN 'Sunday'
+                DAYOFWEEK(t.pickup_time) as day_of_week,
+                CASE DAYOFWEEK(t.pickup_time)
+                    WHEN 1 THEN 'Sunday'
+                    WHEN 2 THEN 'Monday'
+                    WHEN 3 THEN 'Tuesday'
+                    WHEN 4 THEN 'Wednesday'
+                    WHEN 5 THEN 'Thursday'
+                    WHEN 6 THEN 'Friday'
+                    WHEN 7 THEN 'Saturday'
                 END as day_name,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
                 ROUND(AVG(t.trip_duration), 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed), 2) as avg_speed
+                ROUND(AVG(t.passenger_count), 2) as avg_passengers
             FROM trips t
-            JOIN time_dimensions pt ON t.pickup_time_id = pt.time_id
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
-            GROUP BY pt.day_of_week
-            ORDER BY pt.day_of_week
+            GROUP BY DAYOFWEEK(t.pickup_time)
+            ORDER BY day_of_week
         """
 
         cursor.execute(query)
@@ -567,17 +497,13 @@ def get_rush_hour_analysis():
 
         query = """
             SELECT 
-                tf.is_rush_hour,
+                CASE WHEN HOUR(t.pickup_time) IN (7,8,17,18) THEN 1 ELSE 0 END as is_rush_hour,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
                 ROUND(AVG(t.trip_duration), 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed), 2) as avg_speed,
-                ROUND(AVG(tf.trip_efficiency), 3) as avg_efficiency
+                ROUND(AVG(t.passenger_count), 2) as avg_passengers
             FROM trips t
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
-            WHERE tf.is_rush_hour IS NOT NULL
-            GROUP BY tf.is_rush_hour
-            ORDER BY tf.is_rush_hour
+            GROUP BY is_rush_hour
+            ORDER BY is_rush_hour
         """
 
         cursor.execute(query)
@@ -620,17 +546,14 @@ def get_weekend_analysis():
 
         query = """
             SELECT 
-                tf.is_weekend,
-                CASE WHEN tf.is_weekend THEN 'Weekend' ELSE 'Weekday' END as period,
+                CASE WHEN DAYOFWEEK(t.pickup_time) IN (1,7) THEN 1 ELSE 0 END as is_weekend,
+                CASE WHEN DAYOFWEEK(t.pickup_time) IN (1,7) THEN 'Weekend' ELSE 'Weekday' END as period,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
                 ROUND(AVG(t.trip_duration), 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed), 2) as avg_speed
+                ROUND(AVG(t.passenger_count), 2) as avg_passengers
             FROM trips t
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
-            WHERE tf.is_weekend IS NOT NULL
-            GROUP BY tf.is_weekend
-            ORDER BY tf.is_weekend
+            GROUP BY is_weekend
+            ORDER BY is_weekend
         """
 
         cursor.execute(query)
@@ -684,11 +607,10 @@ def get_popular_pickups():
                 pl.longitude as pickup_longitude,
                 pl.latitude as pickup_latitude,
                 COUNT(*) as pickup_count,
-                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
-                ROUND(AVG(t.trip_duration), 0) as avg_duration
+                ROUND(AVG(t.trip_duration), 0) as avg_duration,
+                ROUND(AVG(t.passenger_count), 1) as avg_passengers
             FROM trips t
             JOIN locations pl ON t.pickup_location_id = pl.location_id
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
             GROUP BY pl.longitude, pl.latitude
             ORDER BY pickup_count DESC
             LIMIT %s
@@ -744,11 +666,10 @@ def get_popular_dropoffs():
                 dl.longitude as dropoff_longitude,
                 dl.latitude as dropoff_latitude,
                 COUNT(*) as dropoff_count,
-                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
-                ROUND(AVG(t.trip_duration), 0) as avg_duration
+                ROUND(AVG(t.trip_duration), 0) as avg_duration,
+                ROUND(AVG(t.passenger_count), 1) as avg_passengers
             FROM trips t
             JOIN locations dl ON t.dropoff_location_id = dl.location_id
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
             GROUP BY dl.longitude, dl.latitude
             ORDER BY dropoff_count DESC
             LIMIT %s
@@ -805,13 +726,11 @@ def get_popular_routes():
                 dl.longitude as dropoff_longitude,
                 dl.latitude as dropoff_latitude,
                 COUNT(*) as route_count,
-                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
                 ROUND(AVG(t.trip_duration), 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed), 2) as avg_speed
+                ROUND(AVG(t.passenger_count), 1) as avg_passengers
             FROM trips t
             JOIN locations pl ON t.pickup_location_id = pl.location_id
             JOIN locations dl ON t.dropoff_location_id = dl.location_id
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
             GROUP BY pl.longitude, pl.latitude, dl.longitude, dl.latitude
             ORDER BY route_count DESC
             LIMIT %s
@@ -861,16 +780,12 @@ def get_vendor_comparison():
         query = """
             SELECT 
                 v.vendor_id,
-                v.vendor_name,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
                 ROUND(AVG(t.trip_duration), 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed), 2) as avg_speed,
                 ROUND(AVG(t.passenger_count), 2) as avg_passengers
             FROM trips t
             JOIN vendors v ON t.vendor_id = v.vendor_id
-            LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
-            GROUP BY v.vendor_id, v.vendor_name
+            GROUP BY v.vendor_id
             ORDER BY trip_count DESC
         """
 
