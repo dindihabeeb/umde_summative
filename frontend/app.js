@@ -510,16 +510,16 @@ window.testAPIConnection = async function() {
     try {
         const response = await fetch(`${API_BASE_URL}/health`);
         if (response.ok) {
-            console.log('✅ Backend connection successful!');
+            console.log('Backend connection successful!');
             const data = await response.json();
             console.log('Response:', data);
             return true;
         } else {
-            console.error('❌ Backend returned error:', response.status);
+            console.error('Backend returned error:', response.status);
             return false;
         }
     } catch (error) {
-        console.error('❌ Cannot connect to backend:', error.message);
+        console.error('Cannot connect to backend:', error.message);
         console.log('Make sure your backend is running on:', API_BASE_URL);
         return false;
     }

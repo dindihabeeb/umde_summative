@@ -193,7 +193,7 @@ class NYCTaxiDataCleaner:
         with open(output_file, 'w') as f:
             json.dump({
                 'count': len(self.excluded_records),
-                'records': self.excluded_records[:1000]  # Save first 1000
+                'records': self.excluded_records[:1000]
             }, f, default=str, indent=2)
         print(f"Logged {len(self.excluded_records)} excluded records")
         return self
