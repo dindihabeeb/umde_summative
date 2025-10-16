@@ -5,8 +5,9 @@ Flask based API, includes endpoints for trip data retrieval, statistical analysi
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import psycopg2
-from psycopg2.extras import RealDictCursor
+# replaced psycopg2 with pymysql for MySQL
+import pymysql
+from pymysql.cursors import DictCursor
 import os
 from dotenv import load_dotenv
 from datetime import datetime
@@ -31,31 +32,33 @@ logger = logging.getLogger(__name__)
 # DATABASE CONFIGURATION
 
 # Database connection parameters loaded from environment variables
-# This ensures sensitive credentials are not hardcoded in the source code
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
     'database': os.getenv('DB_NAME', 'nyc_taxi'),
-    'user': os.getenv('DB_USER', 'postgres'),
-    'password': os.getenv('DB_PASSWORD'),
-    'port': os.getenv('DB_PORT', '5432')
+    'user': os.getenv('DB_USER', 'root'),
+    'password': os.getenv('DB_PASSWORD', ''),
+    'port': int(os.getenv('DB_PORT', '3306'))  # MySQL default port
 }
 
 
 def get_db_connection():
     """
-    Establishes and returns a connection to the PostgreSQL database.
-    
-    Returns:
-        psycopg2.connection: Active database connection object
-        
-    Raises:
-        psycopg2.Error: If connection to database fails
+    Establishes and returns a connection to the MySQL database using PyMySQL.
     """
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        logger.info("Database connection established successfully")
+        conn = pymysql.connect(
+            host=DB_CONFIG['host'],
+            user=DB_CONFIG['user'],
+            password=DB_CONFIG['password'],
+            database=DB_CONFIG['database'],
+            port=DB_CONFIG['port'],
+            cursorclass=DictCursor,
+            autocommit=False,
+            charset='utf8mb4'
+        )
+        logger.info("Database connection (MySQL) established successfully")
         return conn
-    except psycopg2.Error as e:
+    except Exception as e:
         logger.error(f"Database connection failed: {str(e)}")
         raise
 
@@ -152,7 +155,7 @@ def get_trips():
         page = max(1, int(request.args.get('page', 1)))
         limit = min(1000, max(1, int(request.args.get('limit', 100))))
         offset = (page - 1) * limit
-        
+
         # Parse optional filter parameters
         vendor_id = request.args.get('vendor_id', type=int)
         min_distance = request.args.get('min_distance', type=float)
@@ -163,9 +166,9 @@ def get_trips():
         end_date = request.args.get('end_date')
         is_rush_hour = request.args.get('is_rush_hour')
         is_weekend = request.args.get('is_weekend')
-        
-        # Build dynamic SQL query based on provided filters
-        query = """
+
+        # Build base SELECT and COUNT templates
+        base_select = """
             SELECT 
                 t.trip_id,
                 v.vendor_name,
@@ -191,81 +194,92 @@ def get_trips():
             LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
             WHERE 1=1
         """
-        
+
+        where_clauses = []
         params = []
         filters_applied = {}
-        
-        # Dynamically add WHERE clauses based on provided filters
+
         if vendor_id is not None:
-            query += " AND t.vendor_id = %s"
+            where_clauses.append("t.vendor_id = %s")
             params.append(vendor_id)
             filters_applied['vendor_id'] = vendor_id
-        
+
         if min_distance is not None:
-            query += " AND tf.trip_distance >= %s"
+            where_clauses.append("tf.trip_distance >= %s")
             params.append(min_distance)
             filters_applied['min_distance'] = min_distance
-        
+
         if max_distance is not None:
-            query += " AND tf.trip_distance <= %s"
+            where_clauses.append("tf.trip_distance <= %s")
             params.append(max_distance)
             filters_applied['max_distance'] = max_distance
-        
+
         if min_duration is not None:
-            query += " AND t.trip_duration >= %s"
+            where_clauses.append("t.trip_duration >= %s")
             params.append(min_duration)
             filters_applied['min_duration'] = min_duration
-        
+
         if max_duration is not None:
-            query += " AND t.trip_duration <= %s"
+            where_clauses.append("t.trip_duration <= %s")
             params.append(max_duration)
             filters_applied['max_duration'] = max_duration
-        
+
         if start_date:
-            query += " AND pt.datetime >= %s"
+            where_clauses.append("pt.datetime >= %s")
             params.append(start_date)
             filters_applied['start_date'] = start_date
-        
+
         if end_date:
-            query += " AND pt.datetime <= %s"
+            where_clauses.append("pt.datetime <= %s")
             params.append(end_date)
             filters_applied['end_date'] = end_date
-        
+
         if is_rush_hour is not None:
             rush_hour_bool = is_rush_hour.lower() in ['true', '1', 'yes']
-            query += " AND tf.is_rush_hour = %s"
-            params.append(rush_hour_bool)
+            where_clauses.append("tf.is_rush_hour = %s")
+            params.append(int(rush_hour_bool))
             filters_applied['is_rush_hour'] = rush_hour_bool
-        
+
         if is_weekend is not None:
             weekend_bool = is_weekend.lower() in ['true', '1', 'yes']
-            query += " AND tf.is_weekend = %s"
-            params.append(weekend_bool)
+            where_clauses.append("tf.is_weekend = %s")
+            params.append(int(weekend_bool))
             filters_applied['is_weekend'] = weekend_bool
-        
-        # Add ordering and pagination
-        query += " ORDER BY pt.datetime DESC LIMIT %s OFFSET %s"
-        params.extend([limit, offset])
-        
+
+        # Combine where clauses
+        if where_clauses:
+            where_clause_sql = " AND " + " AND ".join(where_clauses)
+        else:
+            where_clause_sql = ""
+
+        # Final queries (MySQL uses same %s placeholders)
+        query = base_select + where_clause_sql + " ORDER BY pt.datetime DESC LIMIT %s OFFSET %s"
+        query_params = params + [limit, offset]
+
+        count_query = "SELECT COUNT(*) as total FROM trips t " \
+                      "JOIN vendors v ON t.vendor_id = v.vendor_id " \
+                      "JOIN time_dimensions pt ON t.pickup_time_id = pt.time_id " \
+                      "JOIN time_dimensions dt ON t.dropoff_time_id = dt.time_id " \
+                      "JOIN locations pl ON t.pickup_location_id = pl.location_id " \
+                      "JOIN locations dl ON t.dropoff_location_id = dl.location_id " \
+                      "LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id " \
+                      "WHERE 1=1" + where_clause_sql
+
         # Execute main query
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(query, params)
+        cursor = conn.cursor()  # DictCursor is set at connection level
+        cursor.execute(query, query_params)
         trips = cursor.fetchall()
-        
-        # Get total count for pagination metadata
-        count_query = query.split("ORDER BY")[0].replace(
-            "SELECT t.trip_id, v.vendor_name, pt.datetime as pickup_datetime, dt.datetime as dropoff_datetime, pl.longitude as pickup_longitude, pl.latitude as pickup_latitude, dl.longitude as dropoff_longitude, dl.latitude as dropoff_latitude, t.passenger_count, t.trip_duration, tf.trip_distance, tf.trip_speed, tf.trip_efficiency, tf.is_rush_hour, tf.is_weekend FROM",
-            "SELECT COUNT(*) as total FROM"
-        )
-        cursor.execute(count_query, params[:-2])  # Exclude limit and offset
+
+        # Execute count query
+        cursor.execute(count_query, params)
         total_count = cursor.fetchone()['total']
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info(f"Retrieved {len(trips)} trips (page {page}, total {total_count})")
-        
+
         return jsonify({
             'success': True,
             'trips': trips,
@@ -277,7 +291,7 @@ def get_trips():
             },
             'filters_applied': filters_applied
         }), 200
-    
+
     except ValueError as e:
         logger.error(f"Invalid parameter: {str(e)}")
         return jsonify({
@@ -285,7 +299,7 @@ def get_trips():
             'error': 'Invalid parameter value',
             'message': str(e)
         }), 400
-    
+
     except Exception as e:
         logger.error(f"Error retrieving trips: {str(e)}")
         return jsonify({
@@ -313,17 +327,16 @@ def get_trip_by_id(trip_id):
     """
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Query for single trip with all denormalized data
+        cursor = conn.cursor()
+
         query = """
             SELECT * FROM trip_details
             WHERE trip_id = %s
         """
-        
+
         cursor.execute(query, (trip_id,))
         trip = cursor.fetchone()
-        
+
         cursor.close()
         conn.close()
         
@@ -374,37 +387,37 @@ def get_overview_statistics():
     """
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Aggregate statistics query using trip_facts and trip_details view
+        cursor = conn.cursor()
+
+        # Updated: removed Postgres ::numeric casts (MySQL compatible)
         query = """
             SELECT 
                 COUNT(*) as total_trips,
-                ROUND(AVG(tf.trip_distance)::numeric, 2) as avg_distance,
-                ROUND(AVG(t.trip_duration)::numeric, 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed)::numeric, 2) as avg_speed,
+                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
+                ROUND(AVG(t.trip_duration), 0) as avg_duration,
+                ROUND(AVG(tf.trip_speed), 2) as avg_speed,
                 SUM(t.passenger_count) as total_passengers,
                 MIN(pt.datetime) as earliest_trip,
                 MAX(pt.datetime) as latest_trip,
-                ROUND(AVG(tf.trip_efficiency)::numeric, 3) as avg_efficiency
+                ROUND(AVG(tf.trip_efficiency), 3) as avg_efficiency
             FROM trips t
             JOIN time_dimensions pt ON t.pickup_time_id = pt.time_id
             LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
         """
-        
+
         cursor.execute(query)
         stats = cursor.fetchone()
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info("Retrieved overview statistics")
-        
+
         return jsonify({
             'success': True,
             'statistics': stats
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error retrieving overview statistics: {str(e)}")
         return jsonify({
@@ -434,36 +447,36 @@ def get_hourly_statistics():
     """
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+        cursor = conn.cursor()
+
         query = """
             SELECT 
                 pt.hour as hour,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance)::numeric, 2) as avg_distance,
-                ROUND(AVG(t.trip_duration)::numeric, 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed)::numeric, 2) as avg_speed,
-                ROUND(AVG(t.passenger_count)::numeric, 1) as avg_passengers
+                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
+                ROUND(AVG(t.trip_duration), 0) as avg_duration,
+                ROUND(AVG(tf.trip_speed), 2) as avg_speed,
+                ROUND(AVG(t.passenger_count), 1) as avg_passengers
             FROM trips t
             JOIN time_dimensions pt ON t.pickup_time_id = pt.time_id
             LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
             GROUP BY pt.hour
             ORDER BY pt.hour
         """
-        
+
         cursor.execute(query)
         stats = cursor.fetchall()
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info("Retrieved hourly statistics")
-        
+
         return jsonify({
             'success': True,
             'statistics': stats
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error retrieving hourly statistics: {str(e)}")
         return jsonify({
@@ -488,8 +501,8 @@ def get_daily_statistics():
     """
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+        cursor = conn.cursor()
+
         query = """
             SELECT 
                 pt.day_of_week,
@@ -503,29 +516,29 @@ def get_daily_statistics():
                     WHEN 6 THEN 'Sunday'
                 END as day_name,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance)::numeric, 2) as avg_distance,
-                ROUND(AVG(t.trip_duration)::numeric, 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed)::numeric, 2) as avg_speed
+                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
+                ROUND(AVG(t.trip_duration), 0) as avg_duration,
+                ROUND(AVG(tf.trip_speed), 2) as avg_speed
             FROM trips t
             JOIN time_dimensions pt ON t.pickup_time_id = pt.time_id
             LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
             GROUP BY pt.day_of_week
             ORDER BY pt.day_of_week
         """
-        
+
         cursor.execute(query)
         stats = cursor.fetchall()
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info("Retrieved daily statistics")
-        
+
         return jsonify({
             'success': True,
             'statistics': stats
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error retrieving daily statistics: {str(e)}")
         return jsonify({
@@ -550,36 +563,36 @@ def get_rush_hour_analysis():
     """
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+        cursor = conn.cursor()
+
         query = """
             SELECT 
                 tf.is_rush_hour,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance)::numeric, 2) as avg_distance,
-                ROUND(AVG(t.trip_duration)::numeric, 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed)::numeric, 2) as avg_speed,
-                ROUND(AVG(tf.trip_efficiency)::numeric, 3) as avg_efficiency
+                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
+                ROUND(AVG(t.trip_duration), 0) as avg_duration,
+                ROUND(AVG(tf.trip_speed), 2) as avg_speed,
+                ROUND(AVG(tf.trip_efficiency), 3) as avg_efficiency
             FROM trips t
             LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
             WHERE tf.is_rush_hour IS NOT NULL
             GROUP BY tf.is_rush_hour
             ORDER BY tf.is_rush_hour
         """
-        
+
         cursor.execute(query)
         stats = cursor.fetchall()
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info("Retrieved rush hour analysis")
-        
+
         return jsonify({
             'success': True,
             'statistics': stats
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error retrieving rush hour analysis: {str(e)}")
         return jsonify({
@@ -603,36 +616,36 @@ def get_weekend_analysis():
     """
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+        cursor = conn.cursor()
+
         query = """
             SELECT 
                 tf.is_weekend,
                 CASE WHEN tf.is_weekend THEN 'Weekend' ELSE 'Weekday' END as period,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance)::numeric, 2) as avg_distance,
-                ROUND(AVG(t.trip_duration)::numeric, 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed)::numeric, 2) as avg_speed
+                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
+                ROUND(AVG(t.trip_duration), 0) as avg_duration,
+                ROUND(AVG(tf.trip_speed), 2) as avg_speed
             FROM trips t
             LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
             WHERE tf.is_weekend IS NOT NULL
             GROUP BY tf.is_weekend
             ORDER BY tf.is_weekend
         """
-        
+
         cursor.execute(query)
         stats = cursor.fetchall()
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info("Retrieved weekend analysis")
-        
+
         return jsonify({
             'success': True,
             'statistics': stats
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error retrieving weekend analysis: {str(e)}")
         return jsonify({
@@ -662,17 +675,17 @@ def get_popular_pickups():
     """
     try:
         limit = min(100, max(1, int(request.args.get('limit', 20))))
-        
+
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+        cursor = conn.cursor()
+
         query = """
             SELECT 
                 pl.longitude as pickup_longitude,
                 pl.latitude as pickup_latitude,
                 COUNT(*) as pickup_count,
-                ROUND(AVG(tf.trip_distance)::numeric, 2) as avg_distance,
-                ROUND(AVG(t.trip_duration)::numeric, 0) as avg_duration
+                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
+                ROUND(AVG(t.trip_duration), 0) as avg_duration
             FROM trips t
             JOIN locations pl ON t.pickup_location_id = pl.location_id
             LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
@@ -680,21 +693,21 @@ def get_popular_pickups():
             ORDER BY pickup_count DESC
             LIMIT %s
         """
-        
+
         cursor.execute(query, (limit,))
         locations = cursor.fetchall()
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info(f"Retrieved {len(locations)} popular pickup locations")
-        
+
         return jsonify({
             'success': True,
             'locations': locations,
             'count': len(locations)
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error retrieving popular pickups: {str(e)}")
         return jsonify({
@@ -722,17 +735,17 @@ def get_popular_dropoffs():
     """
     try:
         limit = min(100, max(1, int(request.args.get('limit', 20))))
-        
+
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+        cursor = conn.cursor()
+
         query = """
             SELECT 
                 dl.longitude as dropoff_longitude,
                 dl.latitude as dropoff_latitude,
                 COUNT(*) as dropoff_count,
-                ROUND(AVG(tf.trip_distance)::numeric, 2) as avg_distance,
-                ROUND(AVG(t.trip_duration)::numeric, 0) as avg_duration
+                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
+                ROUND(AVG(t.trip_duration), 0) as avg_duration
             FROM trips t
             JOIN locations dl ON t.dropoff_location_id = dl.location_id
             LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
@@ -740,21 +753,21 @@ def get_popular_dropoffs():
             ORDER BY dropoff_count DESC
             LIMIT %s
         """
-        
+
         cursor.execute(query, (limit,))
         locations = cursor.fetchall()
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info(f"Retrieved {len(locations)} popular dropoff locations")
-        
+
         return jsonify({
             'success': True,
             'locations': locations,
             'count': len(locations)
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error retrieving popular dropoffs: {str(e)}")
         return jsonify({
@@ -781,10 +794,10 @@ def get_popular_routes():
     """
     try:
         limit = min(50, max(1, int(request.args.get('limit', 20))))
-        
+
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+        cursor = conn.cursor()
+
         query = """
             SELECT 
                 pl.longitude as pickup_longitude,
@@ -792,9 +805,9 @@ def get_popular_routes():
                 dl.longitude as dropoff_longitude,
                 dl.latitude as dropoff_latitude,
                 COUNT(*) as route_count,
-                ROUND(AVG(tf.trip_distance)::numeric, 2) as avg_distance,
-                ROUND(AVG(t.trip_duration)::numeric, 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed)::numeric, 2) as avg_speed
+                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
+                ROUND(AVG(t.trip_duration), 0) as avg_duration,
+                ROUND(AVG(tf.trip_speed), 2) as avg_speed
             FROM trips t
             JOIN locations pl ON t.pickup_location_id = pl.location_id
             JOIN locations dl ON t.dropoff_location_id = dl.location_id
@@ -803,21 +816,21 @@ def get_popular_routes():
             ORDER BY route_count DESC
             LIMIT %s
         """
-        
+
         cursor.execute(query, (limit,))
         routes = cursor.fetchall()
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info(f"Retrieved {len(routes)} popular routes")
-        
+
         return jsonify({
             'success': True,
             'routes': routes,
             'count': len(routes)
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error retrieving popular routes: {str(e)}")
         return jsonify({
@@ -843,37 +856,37 @@ def get_vendor_comparison():
     """
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+        cursor = conn.cursor()
+
         query = """
             SELECT 
                 v.vendor_id,
                 v.vendor_name,
                 COUNT(*) as trip_count,
-                ROUND(AVG(tf.trip_distance)::numeric, 2) as avg_distance,
-                ROUND(AVG(t.trip_duration)::numeric, 0) as avg_duration,
-                ROUND(AVG(tf.trip_speed)::numeric, 2) as avg_speed,
-                ROUND(AVG(t.passenger_count)::numeric, 2) as avg_passengers
+                ROUND(AVG(tf.trip_distance), 2) as avg_distance,
+                ROUND(AVG(t.trip_duration), 0) as avg_duration,
+                ROUND(AVG(tf.trip_speed), 2) as avg_speed,
+                ROUND(AVG(t.passenger_count), 2) as avg_passengers
             FROM trips t
             JOIN vendors v ON t.vendor_id = v.vendor_id
             LEFT JOIN trip_facts tf ON t.trip_id = tf.trip_id
             GROUP BY v.vendor_id, v.vendor_name
             ORDER BY trip_count DESC
         """
-        
+
         cursor.execute(query)
         vendors = cursor.fetchall()
-        
+
         cursor.close()
         conn.close()
-        
+
         logger.info("Retrieved vendor comparison")
-        
+
         return jsonify({
             'success': True,
             'vendors': vendors
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Error retrieving vendor comparison: {str(e)}")
         return jsonify({
@@ -883,7 +896,7 @@ def get_vendor_comparison():
         }), 500
 
 
-# ============= ERROR HANDLERS =============
+# ERROR HANDLERS 
 
 @app.errorhandler(404)
 def not_found(error):
@@ -918,7 +931,7 @@ def bad_request(error):
     }), 400
 
 
-# ============= MAIN APPLICATION ENTRY POINT =============
+# MAIN APPLICATION ENTRY POINT 
 
 if __name__ == '__main__':
     """
