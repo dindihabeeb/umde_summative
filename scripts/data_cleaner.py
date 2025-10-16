@@ -234,5 +234,5 @@ class NYCTaxiDataCleaner:
                 .generate_cleaning_report())
 
 if __name__ == "__main__":
-    cleaner = NYCTaxiDataCleaner(pathlib.Path('data') / 'train.csv')
-    cleaner.process_all(pathlib.Path('data') / 'cleaned_train_data.csv')
+    cleaner = NYCTaxiDataCleaner(pathlib.Path('..') / 'data' / 'train.csv')
+    cleaner.process_all(pathlib.Path('..') / 'data' / 'cleaned_train_data.csv')
