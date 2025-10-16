@@ -3,6 +3,7 @@ import numpy as np
 from datetime import datetime
 import json
 import os
+import pathlib
 
 class NYCTaxiDataCleaner:
     def __init__(self, input_file):
@@ -27,7 +28,7 @@ class NYCTaxiDataCleaner:
         critical_fields = ['pickup_datetime', 'dropoff_datetime', 
                           'pickup_longitude', 'pickup_latitude',
                           'dropoff_longitude', 'dropoff_latitude']
-        
+
         missing_mask = self.df[critical_fields].isnull().any(axis=1)
         self.excluded_records.extend(
             self.df[missing_mask].to_dict('records')
@@ -233,5 +234,5 @@ class NYCTaxiDataCleaner:
                 .generate_cleaning_report())
 
 if __name__ == "__main__":
-    cleaner = NYCTaxiDataCleaner('train.csv')
-    cleaner.process_all('cleaned_train_data.csv')
+    cleaner = NYCTaxiDataCleaner(pathlib.Path('data') / 'train.csv')
+    cleaner.process_all(pathlib.Path('data') / 'cleaned_train_data.csv')
