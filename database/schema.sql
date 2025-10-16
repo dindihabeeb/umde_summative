@@ -1,6 +1,5 @@
 CREATE TABLE vendors (
     vendor_id INTEGER PRIMARY KEY,
-    vendor_name VARCHAR(100)
 );
 s
 CREATE TABLE locations (
