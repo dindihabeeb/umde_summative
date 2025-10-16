@@ -11,6 +11,9 @@ import math
 import argparse
 from typing import Dict, Tuple, Optional
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import pymysql
 from pymysql.cursors import DictCursor
