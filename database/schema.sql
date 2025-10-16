@@ -1,7 +1,7 @@
 CREATE TABLE vendors (
     vendor_id INTEGER PRIMARY KEY,
 );
-s
+
 CREATE TABLE locations (
     location_id SERIAL PRIMARY KEY,
     longitude DECIMAL(10, 7) NOT NULL,
