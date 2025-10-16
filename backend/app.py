@@ -82,7 +82,7 @@ def serialize_datetime(obj):
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
-# ============= UTILITY ENDPOINTS =============
+# UTILITY ENDPOINTS
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
