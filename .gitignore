@@ -1,3 +1,4 @@
 data/train.csv
 data/cleaned_train_data.csv
 data/excluded_records.log
+venv/
