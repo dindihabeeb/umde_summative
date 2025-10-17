@@ -15,9 +15,9 @@
                 <div class="header-subtitle">Real-time Urban Mobility Intelligence</div>
             </div>
             <div class="date-filter">
-                <input type="date" id="startDate" value="2024-01-01">
+                <input type="date" id="startDate">
                 <span style="color: #a0a0a0;">to</span>
-                <input type="date" id="endDate" value="2024-01-31">
+                <input type="date" id="endDate">
                 <button id="applyDateBtn">Apply</button>
             </div>
         </div>
@@ -39,12 +39,6 @@
                 </div>
 
                 <div class="filter-group">
-                    <label>Fare Range ($)</label>
-                    <input type="range" min="0" max="100" value="100" id="fareRange">
-                    <div class="range-value">$0 - $<span id="fareValue">100</span></div>
-                </div>
-
-                <div class="filter-group">
                     <label>Trip Distance (miles)</label>
                     <input type="range" min="0" max="50" value="50" id="distanceRange">
                     <div class="range-value">0 - <span id="distanceValue">50</span> miles</div>
@@ -62,15 +56,20 @@
                 </div>
 
                 <div class="filter-group">
-                    <label>Borough</label>
-                    <select id="boroughFilter">
-                        <option value="all">All Boroughs</option>
-                        <option value="manhattan">Manhattan</option>
-                        <option value="brooklyn">Brooklyn</option>
-                        <option value="queens">Queens</option>
-                        <option value="bronx">Bronx</option>
-                        <option value="staten_island">Staten Island</option>
+                    <label>Vendor</label>
+                    <select id="vendorFilter">
+                        <option value="all">All</option>
+                        <option value="1">Vendor 1</option>
+                        <option value="2">Vendor 2</option>
                     </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>Trip Duration (seconds)</label>
+                    <div class="checkbox-group">
+                        <input type="number" id="durationMin" placeholder="Min" min="0">
+                        <input type="number" id="durationMax" placeholder="Max" min="0">
+                    </div>
                 </div>
 
                 <button class="apply-btn" id="applyFiltersBtn">Apply Filters</button>
@@ -93,11 +92,6 @@
                         <div class="kpi-value" id="kpiTotalDistance">-</div>
                         <div class="kpi-change" id="kpiTotalDistanceChange">Loading...</div>
                     </div>
-                    <div class="kpi-card">
-                        <div class="kpi-label">Avg Fare</div>
-                        <div class="kpi-value" id="kpiAvgFare">-</div>
-                        <div class="kpi-change" id="kpiAvgFareChange">Loading...</div>
-                    </div>
                 </div>
 
                 <div class="chart-container full-width">
@@ -114,14 +108,6 @@
                             <canvas id="speedChart"></canvas>
                         </div>
                     </div>
-
-                    <div class="chart-container">
-                        <div class="chart-title">Passenger Distribution</div>
-                        <div class="chart-wrapper">
-                            <canvas id="passengerChart"></canvas>
-                        </div>
-                    </div>
-
                 <div class="insights-panel">
                     <h3>Key Insights</h3>
                     <div id="insightsContainer">
