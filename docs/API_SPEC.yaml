@@ -1,0 +1,509 @@
+openapi: 3.0.3
+info:
+  title: NYC Taxi Analytics API
+  version: 1.0.0
+  description: REST API for querying cleaned NYC taxi trips and derived statistics.
+servers:
+  - url: http://localhost:5000/api
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service healthy
+        '500':
+          description: Service unhealthy
+  /trips:
+    get:
+      summary: List trips with filters and pagination
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - in: query
+          name: vendor_id
+          schema:
+            type: integer
+        - in: query
+          name: min_distance
+          schema:
+            type: number
+        - in: query
+          name: max_distance
+          schema:
+            type: number
+        - in: query
+          name: min_duration
+          schema:
+            type: integer
+        - in: query
+          name: max_duration
+          schema:
+            type: integer
+        - in: query
+          name: start_date
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: end_date
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: is_rush_hour
+          schema:
+            type: boolean
+        - in: query
+          name: is_weekend
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Trip list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  trips:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Trip'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+                  filters_applied:
+                    type: object
+        '400':
+          description: Invalid parameter
+        '500':
+          description: Server error
+  /trips/{trip_id}:
+    get:
+      summary: Get trip by id
+      parameters:
+        - in: path
+          name: trip_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trip
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  trip:
+                    $ref: '#/components/schemas/TripDetail'
+        '404':
+          description: Not found
+        '500':
+          description: Server error
+  /statistics/overview:
+    get:
+      summary: Overview statistics
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  statistics:
+                    $ref: '#/components/schemas/OverviewStats'
+        '500':
+          description: Server error
+  /statistics/by-hour:
+    get:
+      summary: Hourly statistics
+      responses:
+        '200':
+          description: Stats by hour
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  statistics:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HourlyStats'
+        '500':
+          description: Server error
+  /statistics/by-day-of-week:
+    get:
+      summary: Day-of-week statistics
+      responses:
+        '200':
+          description: Stats by day-of-week
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  statistics:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DailyStats'
+        '500':
+          description: Server error
+  /statistics/rush-hour-analysis:
+    get:
+      summary: Rush hour vs non-rush hour comparison
+      responses:
+        '200':
+          description: Rush hour analysis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  statistics:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RushWeekendStats'
+        '500':
+          description: Server error
+  /statistics/weekend-analysis:
+    get:
+      summary: Weekend vs weekday comparison
+      responses:
+        '200':
+          description: Weekend analysis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  statistics:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RushWeekendStats'
+        '500':
+          description: Server error
+  /locations/popular-pickups:
+    get:
+      summary: Popular pickup locations
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Popular pickups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  locations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PopularLocation'
+                  count:
+                    type: integer
+        '500':
+          description: Server error
+  /locations/popular-dropoffs:
+    get:
+      summary: Popular dropoff locations
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Popular dropoffs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  locations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PopularLocation'
+                  count:
+                    type: integer
+        '500':
+          description: Server error
+  /locations/routes:
+    get:
+      summary: Popular routes
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Popular routes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  routes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PopularRoute'
+                  count:
+                    type: integer
+        '500':
+          description: Server error
+  /vendors/comparison:
+    get:
+      summary: Vendor comparison
+      responses:
+        '200':
+          description: Vendor comparison stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  vendors:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VendorStats'
+        '500':
+          description: Server error
+components:
+  schemas:
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        pages:
+          type: integer
+    Trip:
+      type: object
+      properties:
+        trip_id:
+          type: string
+        vendor_name:
+          type: string
+          nullable: true
+        pickup_datetime:
+          type: string
+          format: date-time
+        dropoff_datetime:
+          type: string
+          format: date-time
+        pickup_longitude:
+          type: number
+        pickup_latitude:
+          type: number
+        dropoff_longitude:
+          type: number
+        dropoff_latitude:
+          type: number
+        passenger_count:
+          type: integer
+        trip_duration:
+          type: integer
+        trip_distance:
+          type: number
+          nullable: true
+        trip_speed:
+          type: number
+          nullable: true
+        trip_efficiency:
+          type: number
+          nullable: true
+        is_rush_hour:
+          type: integer
+          nullable: true
+        is_weekend:
+          type: integer
+          nullable: true
+    TripDetail:
+      allOf:
+        - $ref: '#/components/schemas/Trip'
+      properties:
+        store_and_fwd_flag:
+          type: string
+    OverviewStats:
+      type: object
+      properties:
+        total_trips:
+          type: integer
+        avg_distance:
+          type: number
+        avg_duration:
+          type: number
+        avg_speed:
+          type: number
+        total_passengers:
+          type: integer
+        earliest_trip:
+          type: string
+          format: date-time
+        latest_trip:
+          type: string
+          format: date-time
+        avg_efficiency:
+          type: number
+    HourlyStats:
+      type: object
+      properties:
+        hour:
+          type: integer
+        trip_count:
+          type: integer
+        avg_distance:
+          type: number
+        avg_duration:
+          type: number
+        avg_speed:
+          type: number
+        avg_passengers:
+          type: number
+    DailyStats:
+      type: object
+      properties:
+        day_of_week:
+          type: integer
+        day_name:
+          type: string
+        trip_count:
+          type: integer
+        avg_distance:
+          type: number
+        avg_duration:
+          type: number
+        avg_speed:
+          type: number
+    RushWeekendStats:
+      type: object
+      properties:
+        is_rush_hour:
+          type: integer
+          nullable: true
+        is_weekend:
+          type: integer
+          nullable: true
+        trip_count:
+          type: integer
+        avg_distance:
+          type: number
+        avg_duration:
+          type: number
+        avg_speed:
+          type: number
+        avg_efficiency:
+          type: number
+          nullable: true
+    PopularLocation:
+      type: object
+      properties:
+        pickup_longitude:
+          type: number
+          nullable: true
+        pickup_latitude:
+          type: number
+          nullable: true
+        dropoff_longitude:
+          type: number
+          nullable: true
+        dropoff_latitude:
+          type: number
+          nullable: true
+        pickup_count:
+          type: integer
+          nullable: true
+        dropoff_count:
+          type: integer
+          nullable: true
+        avg_distance:
+          type: number
+        avg_duration:
+          type: number
+    PopularRoute:
+      type: object
+      properties:
+        pickup_longitude:
+          type: number
+        pickup_latitude:
+          type: number
+        dropoff_longitude:
+          type: number
+        dropoff_latitude:
+          type: number
+        route_count:
+          type: integer
+        avg_distance:
+          type: number
+        avg_duration:
+          type: number
+        avg_speed:
+          type: number
+    VendorStats:
+      type: object
+      properties:
+        vendor_id:
+          type: integer
+        vendor_name:
+          type: string
+        trip_count:
+          type: integer
+        avg_distance:
+          type: number
+        avg_duration:
+          type: number
+        avg_speed:
+          type: number
+        avg_passengers:
+          type: number
