@@ -156,6 +156,7 @@ def get_trips():
         max_duration = request.args.get('max_duration', type=int)
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
+        passenger_count = request.args.get('passenger_count', type=int)
 
         base_select = """
             SELECT 
@@ -202,6 +203,11 @@ def get_trips():
             where_clauses.append("pickup_datetime <= %s")
             params.append(end_date)
             filters_applied['end_date'] = end_date
+
+        if passenger_count is not None:
+            where_clauses.append("passenger_count = %s")
+            params.append(passenger_count)
+            filters_applied['passenger_count'] = passenger_count
 
         where_clause_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -332,17 +338,35 @@ def get_overview_statistics():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        query = """
-            SELECT 
-                COUNT(*) as total_trips,
-                ROUND(AVG(t.trip_duration), 0) as avg_duration,
-                SUM(t.passenger_count) as total_passengers,
-                MIN(t.pickup_time) as earliest_trip,
-                MAX(t.pickup_time) as latest_trip
-            FROM trips t
-        """
+        # Optional filters: start_date, end_date, passenger_count
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        passenger_count = request.args.get('passenger_count', type=int)
 
-        cursor.execute(query)
+        base = (
+            "SELECT COUNT(*) as total_trips, "
+            "ROUND(AVG(t.trip_duration), 0) as avg_duration, "
+            "SUM(t.passenger_count) as total_passengers, "
+            "MIN(t.pickup_time) as earliest_trip, "
+            "MAX(t.pickup_time) as latest_trip "
+            "FROM trips t WHERE 1=1"
+        )
+
+        where_clauses = []
+        params = []
+        if start_date:
+            where_clauses.append(" AND t.pickup_time >= %s")
+            params.append(start_date)
+        if end_date:
+            where_clauses.append(" AND t.pickup_time <= %s")
+            params.append(end_date)
+        if passenger_count is not None:
+            where_clauses.append(" AND t.passenger_count = %s")
+            params.append(passenger_count)
+
+        query = base + "".join(where_clauses)
+
+        cursor.execute(query, params)
         stats = cursor.fetchone()
 
         cursor.close()
@@ -386,18 +410,34 @@ def get_hourly_statistics():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        query = """
-            SELECT 
-                HOUR(t.pickup_time) as hour,
-                COUNT(*) as trip_count,
-                ROUND(AVG(t.trip_duration), 0) as avg_duration,
-                ROUND(AVG(t.passenger_count), 1) as avg_passengers
-            FROM trips t
-            GROUP BY HOUR(t.pickup_time)
-            ORDER BY hour
-        """
+        # Optional filters: start_date, end_date, passenger_count
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        passenger_count = request.args.get('passenger_count', type=int)
 
-        cursor.execute(query)
+        base = (
+            "SELECT HOUR(t.pickup_time) as hour, "
+            "COUNT(*) as trip_count, "
+            "ROUND(AVG(t.trip_duration), 0) as avg_duration, "
+            "ROUND(AVG(t.passenger_count), 1) as avg_passengers "
+            "FROM trips t WHERE 1=1"
+        )
+        where_clauses = []
+        params = []
+        if start_date:
+            where_clauses.append(" AND t.pickup_time >= %s")
+            params.append(start_date)
+        if end_date:
+            where_clauses.append(" AND t.pickup_time <= %s")
+            params.append(end_date)
+        if passenger_count is not None:
+            where_clauses.append(" AND t.passenger_count = %s")
+            params.append(passenger_count)
+
+        group_order = " GROUP BY HOUR(t.pickup_time) ORDER BY hour"
+        query = base + "".join(where_clauses) + group_order
+
+        cursor.execute(query, params)
         stats = cursor.fetchall()
 
         cursor.close()
