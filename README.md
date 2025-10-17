@@ -4,7 +4,7 @@
 This repo tracks the full end-to-end submission for the NYC taxi summative. It covers our raw pipeline, the cleaned data we ship to the database, the backend that exposes it, and the dashboard that tells the story. The goal is to make it trivial for a reviewer to clone the repo, rebuild the stack, and replay our analysis without pinging the team.
 
 ### Video Walkthrough
-https://youtu.be/HVIKl4HwkhE
+(https://youtu.be/HVIKl4HwkhE?si=DZHA1pFOj-Q1RVOT)
 
 ### Learning goals we are leaning on
 - Apply data cleaning decisions on messy taxi trips and explain the trade-offs.
