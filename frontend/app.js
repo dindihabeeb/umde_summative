@@ -1,11 +1,5 @@
-// ============================================
-// CONFIGURATION - UPDATE THIS WITH YOUR BACKEND URL
-// ============================================
-const API_BASE_URL = 'http://localhost:5000/api'; // Change this to your backend URL
+const API_BASE_URL = 'http://localhost:5000/api'; 
 
-// ============================================
-// GLOBAL VARIABLES
-// ============================================
 let charts = {};
 const chartColors = {
     primary: 'rgba(102, 126, 234, 0.8)',
@@ -16,9 +10,7 @@ const chartColors = {
     info: 'rgba(96, 165, 250, 0.8)'
 };
 
-// ============================================
 // API HELPER FUNCTIONS
-// ============================================
 
 async function fetchAPI(endpoint, options = {}) {
     try {
@@ -55,10 +47,12 @@ function getFilters() {
             evening: document.getElementById('timeEvening').checked,
             night: document.getElementById('timeNight').checked
         },
-        fareMax: parseInt(document.getElementById('fareRange').value),
-        distanceMax: parseInt(document.getElementById('distanceRange').value),
+        fareMax: (document.getElementById('fareRange') ? parseInt(document.getElementById('fareRange').value) : null),
+        distanceMax: (document.getElementById('distanceRange') ? parseInt(document.getElementById('distanceRange').value) : null),
         passengerCount: document.getElementById('passengerFilter').value,
-        borough: document.getElementById('boroughFilter').value
+        vendorId: document.getElementById('vendorFilter') ? document.getElementById('vendorFilter').value : 'all',
+        durationMin: document.getElementById('durationMin') ? document.getElementById('durationMin').value : '',
+        durationMax: document.getElementById('durationMax') ? document.getElementById('durationMax').value : '',
     };
 }
 
@@ -67,72 +61,184 @@ function buildQueryString(filters) {
     
     if (filters.startDate) params.append('start_date', filters.startDate);
     if (filters.endDate) params.append('end_date', filters.endDate);
-    if (filters.fareMax) params.append('fare_max', filters.fareMax);
-    if (filters.distanceMax) params.append('distance_max', filters.distanceMax);
     if (filters.passengerCount !== 'all') params.append('passenger_count', filters.passengerCount);
-    if (filters.borough !== 'all') params.append('borough', filters.borough);
-    
+    if (filters.vendorId && filters.vendorId !== 'all') params.append('vendor_id', filters.vendorId);
+    if (filters.durationMin) params.append('min_duration', filters.durationMin);
+    if (filters.durationMax) params.append('max_duration', filters.durationMax);
+
     const timeFilters = [];
     if (filters.timeOfDay.morning) timeFilters.push('morning');
     if (filters.timeOfDay.afternoon) timeFilters.push('afternoon');
     if (filters.timeOfDay.evening) timeFilters.push('evening');
     if (filters.timeOfDay.night) timeFilters.push('night');
     if (timeFilters.length > 0 && timeFilters.length < 4) {
-        params.append('time_of_day', timeFilters.join(','));
     }
     
     return params.toString();
 }
 
-// ============================================
 // API ENDPOINT FUNCTIONS
-// ============================================
 
 async function fetchSummary(filters) {
     const query = buildQueryString(filters);
-    return await fetchAPI(`/summary?${query}`);
+    const resp = await fetchAPI(`/statistics/overview?${query}`);
+    const stats = resp && resp.statistics ? resp.statistics : {};
+    // Normalize for UI expectations
+    if (typeof stats.avg_duration === 'number') {
+        stats.avg_duration = (stats.avg_duration / 60).toFixed(1); // seconds -> minutes
+    }
+    // Approximate total distance (miles) from first 1000 trips if backend does not provide it
+    if (stats.total_distance === undefined || stats.total_distance === null) {
+        try {
+            const tripsResp = await fetchAPI(`/trips?${query}&limit=1000&page=1`);
+            const trips = tripsResp.trips || [];
+            let totalMiles = 0;
+            for (const t of trips) {
+                const miles = haversineMiles(
+                    Number(t.pickup_latitude), Number(t.pickup_longitude),
+                    Number(t.dropoff_latitude), Number(t.dropoff_longitude)
+                );
+                if (!Number.isNaN(miles) && Number.isFinite(miles)) totalMiles += miles;
+            }
+            stats.total_distance = Math.round(totalMiles);
+        } catch (e) {
+            stats.total_distance = null;
+        }
+    }
+    if (stats.avg_fare === undefined) stats.avg_fare = null; // not provided by backend
+    return stats;
 }
 
 async function fetchHourlyTrips(filters) {
     const query = buildQueryString(filters);
-    return await fetchAPI(`/trips/hourly?${query}`);
+    const resp = await fetchAPI(`/statistics/by-hour?${query}`);
+    const rows = resp && resp.statistics ? resp.statistics : [];
+    const hours = rows.map(r => r.hour);
+    const counts = rows.map(r => r.trip_count);
+    return { hours, counts };
 }
 
 async function fetchSpeedByTime(filters) {
+    // Approximate "speed" panel with average duration by time-of-day buckets
     const query = buildQueryString(filters);
-    return await fetchAPI(`/speed/by-time?${query}`);
+    const resp = await fetchAPI(`/statistics/by-hour?${query}`);
+    const rows = resp && resp.statistics ? resp.statistics : [];
+    const buckets = { morning: [], afternoon: [], evening: [], night: [] };
+    rows.forEach(r => {
+        const h = Number(r.hour);
+        const avgMin = Number(r.avg_duration) / 60;
+        if (h >= 6 && h < 12) buckets.morning.push(avgMin);
+        else if (h >= 12 && h < 18) buckets.afternoon.push(avgMin);
+        else if (h >= 18 && h < 22) buckets.evening.push(avgMin);
+        else buckets.night.push(avgMin);
+    });
+    const avg = arr => (arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length) : 0).toFixed(1);
+    return {
+        labels: ['Morning', 'Afternoon', 'Evening', 'Night'],
+        speeds: [avg(buckets.morning), avg(buckets.afternoon), avg(buckets.evening), avg(buckets.night)]
+    };
 }
 
 async function fetchPassengerDistribution(filters) {
     const query = buildQueryString(filters);
-    return await fetchAPI(`/passengers/distribution?${query}`);
+    const data = await fetchAPI(`/trips?${query}&limit=1000&page=1`);
+    const trips = data.trips || [];
+    const bins = { '1': 0, '2': 0, '3': 0, '4+': 0 };
+    trips.forEach(t => {
+        const pc = Number(t.passenger_count || 0);
+        if (pc <= 1) bins['1']++;
+        else if (pc === 2) bins['2']++;
+        else if (pc === 3) bins['3']++;
+        else bins['4+']++;
+    });
+    return {
+        labels: ['1 Passenger', '2 Passengers', '3 Passengers', '4+ Passengers'],
+        counts: [bins['1'], bins['2'], bins['3'], bins['4+']]
+    };
 }
 
 async function fetchDurationDistribution(filters) {
     const query = buildQueryString(filters);
-    return await fetchAPI(`/duration/distribution?${query}`);
+    const data = await fetchAPI(`/trips?${query}&limit=1000&page=1`);
+    const trips = data.trips || [];
+    const buckets = [0, 0, 0, 0, 0, 0];
+    trips.forEach(t => {
+        const minutes = Number(t.trip_duration || 0) / 60;
+        if (minutes < 10) buckets[0]++;
+        else if (minutes < 20) buckets[1]++;
+        else if (minutes < 30) buckets[2]++;
+        else if (minutes < 40) buckets[3]++;
+        else if (minutes < 50) buckets[4]++;
+        else buckets[5]++;
+    });
+    return {
+        ranges: ['0-10m', '10-20m', '20-30m', '30-40m', '40-50m', '50m+'],
+        counts: buckets
+    };
 }
 
 async function fetchScatterData(filters) {
     const query = buildQueryString(filters);
-    return await fetchAPI(`/trips/scatter?${query}&limit=200`);
+    const data = await fetchAPI(`/trips?${query}&limit=200&page=1`);
+    const trips = data.trips || [];
+    const points = trips.map(t => {
+        const d = haversineMiles(
+            Number(t.pickup_latitude), Number(t.pickup_longitude),
+            Number(t.dropoff_latitude), Number(t.dropoff_longitude)
+        );
+        const minutes = Number(t.trip_duration || 0) / 60;
+        return { x: Number(d.toFixed(2)), y: Number(minutes.toFixed(1)) };
+    });
+    return { data: points };
 }
 
 async function fetchInsights(filters) {
     const query = buildQueryString(filters);
-    return await fetchAPI(`/insights?${query}`);
+    const resp = await fetchAPI(`/statistics/by-hour?${query}`);
+    const rows = resp && resp.statistics ? resp.statistics : [];
+    if (!rows || !rows.length) return { insights: [] };
+    const maxRow = rows.reduce((a, b) => (a.trip_count > b.trip_count ? a : b));
+    const minRow = rows.reduce((a, b) => (a.trip_count < b.trip_count ? a : b));
+    const slowRow = rows.reduce((a, b) => (a.avg_duration > b.avg_duration ? a : b));
+    const slowMin = (Number(slowRow.avg_duration) / 60).toFixed(1);
+    return {
+        insights: [
+            {
+                title: 'Peak Hour',
+                description: `Highest trip volume at ${maxRow.hour}:00 with ${maxRow.trip_count} trips.`
+            },
+            {
+                title: 'Quietest Hour',
+                description: `Lowest trip volume at ${minRow.hour}:00 with ${minRow.trip_count} trips.`
+            },
+            {
+                title: 'Longest Avg Duration',
+                description: `Trips around ${slowRow.hour}:00 take the longest on average (${slowMin} min).`
+            }
+        ]
+    };
 }
 
-// ============================================
 // UI UPDATE FUNCTIONS
-// ============================================
-
 function updateKPIs(data) {
-    document.getElementById('kpiTotalTrips').textContent = formatNumber(data.total_trips);
-    document.getElementById('kpiAvgDuration').textContent = `${data.avg_duration}m`;
-    document.getElementById('kpiTotalDistance').textContent = `${formatNumber(data.total_distance)} mi`;
-    document.getElementById('kpiAvgFare').textContent = `$${data.avg_fare.toFixed(2)}`;
-    
+    const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+    setText('kpiTotalTrips', data.total_trips !== undefined ? formatNumber(data.total_trips) : '—');
+    setText('kpiAvgDuration', data.avg_duration !== undefined ? `${data.avg_duration}m` : '—');
+    setText('kpiTotalDistance', (data.total_distance !== null && data.total_distance !== undefined) ? `${formatNumber(data.total_distance)} mi` : '—');
+    setText('kpiAvgFare', (data.avg_fare !== null && data.avg_fare !== undefined) ? `$${Number(data.avg_fare).toFixed(2)}` : '—');
+    // Reset change indicators if no comparison data
+    const resetChange = (id) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = '—';
+            el.style.color = '#a0a0a0';
+        }
+    };
+    resetChange('kpiTotalTripsChange');
+    resetChange('kpiAvgDurationChange');
+    resetChange('kpiTotalDistanceChange');
+    resetChange('kpiAvgFareChange');
+
     if (data.changes) {
         updateChangeIndicator('kpiTotalTripsChange', data.changes.trips);
         updateChangeIndicator('kpiAvgDurationChange', data.changes.duration);
@@ -188,12 +294,16 @@ function formatNumber(num) {
     return num.toString();
 }
 
-// ============================================
 // CHART FUNCTIONS
-// ============================================
 
 function initializeCharts() {
-    charts.timeSeries = new Chart(document.getElementById('timeSeriesChart').getContext('2d'), {
+    const getCtx = (id) => {
+        const el = document.getElementById(id);
+        return el ? el.getContext('2d') : null;
+    };
+
+    const tsCtx = getCtx('timeSeriesChart');
+    if (tsCtx) charts.timeSeries = new Chart(tsCtx, {
         type: 'line',
         data: {
             labels: [],
@@ -211,7 +321,8 @@ function initializeCharts() {
         options: getChartOptions('linear')
     });
 
-    charts.speed = new Chart(document.getElementById('speedChart').getContext('2d'), {
+    const spCtx = getCtx('speedChart');
+    if (spCtx) charts.speed = new Chart(spCtx, {
         type: 'bar',
         data: {
             labels: [],
@@ -224,7 +335,8 @@ function initializeCharts() {
         options: getChartOptions('bar')
     });
 
-    charts.passenger = new Chart(document.getElementById('passengerChart').getContext('2d'), {
+    const psCtx = getCtx('passengerChart');
+    if (psCtx) charts.passenger = new Chart(psCtx, {
         type: 'doughnut',
         data: {
             labels: [],
@@ -236,7 +348,8 @@ function initializeCharts() {
         options: getDoughnutOptions()
     });
 
-    charts.duration = new Chart(document.getElementById('durationChart').getContext('2d'), {
+    const duCtx = getCtx('durationChart');
+    if (duCtx) charts.duration = new Chart(duCtx, {
         type: 'bar',
         data: {
             labels: [],
@@ -249,7 +362,8 @@ function initializeCharts() {
         options: getChartOptions('bar')
     });
 
-    charts.scatter = new Chart(document.getElementById('scatterChart').getContext('2d'), {
+    const scCtx = getCtx('scatterChart');
+    if (scCtx) charts.scatter = new Chart(scCtx, {
         type: 'scatter',
         data: {
             datasets: [{
@@ -315,7 +429,7 @@ function getScatterOptions() {
                 grid: { color: 'rgba(255, 255, 255, 0.1)' }
             },
             x: {
-                title: { display: true, text: 'Distance (miles)', color: '#a0a0a0' },
+                title: { display: true, text: 'Distance (miles, haversine)', color: '#a0a0a0' },
                 ticks: { color: '#a0a0a0' },
                 grid: { color: 'rgba(255, 255, 255, 0.1)' }
             }
@@ -343,9 +457,18 @@ function updateScatterChart(data) {
     charts.scatter.update();
 }
 
-// ============================================
-// MAIN DATA LOADING FUNCTION
-// ============================================
+// Haversine distance in miles from lat/lon pairs
+function haversineMiles(lat1, lon1, lat2, lon2) {
+    const toRad = d => d * Math.PI / 180;
+    const R = 3958.7613; // Earth radius in miles
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
 
 async function loadDashboardData() {
     const filters = getFilters();
@@ -382,113 +505,54 @@ async function loadDashboardData() {
         
     } catch (error) {
         console.error('Error loading dashboard data:', error);
-        loadMockData();
+        // Stay on UI and show error; avoid undefined mock fallback
+        showError('Backend request failed. Check API_BASE_URL and server status.');
     } finally {
         document.getElementById('applyFiltersBtn').disabled = false;
         document.getElementById('applyDateBtn').disabled = false;
     }
 }
 
-// ============================================
-// MOCK DATA (FOR TESTING WITHOUT BACKEND)
-// ============================================
-
-function loadMockData() {
-    console.warn('Loading mock data - backend connection failed');
-    
-    updateKPIs({
-        total_trips: 1200000,
-        avg_duration: 18.4,
-        total_distance: 8300000,
-        avg_fare: 16.82,
-        changes: {
-            trips: 12.5,
-            duration: -3.2,
-            distance: 8.7,
-            fare: 5.1
-        }
-    });
-    
-    updateChart('timeSeries', 
-        ['12AM', '2AM', '4AM', '6AM', '8AM', '10AM', '12PM', '2PM', '4PM', '6PM', '8PM', '10PM'],
-        [3200, 1800, 1200, 2500, 8900, 7200, 6500, 6800, 7500, 9800, 8200, 5400]
-    );
-    
-    updateChart('speed',
-        ['Morning', 'Afternoon', 'Evening', 'Night'],
-        [12.5, 14.2, 9.8, 18.5]
-    );
-    
-    updateChart('passenger',
-        ['1 Passenger', '2 Passengers', '3 Passengers', '4+ Passengers'],
-        [72, 18, 7, 3]
-    );
-    
-    updateChart('duration',
-        ['0-10m', '10-20m', '20-30m', '30-40m', '40-50m', '50m+'],
-        [285000, 420000, 315000, 125000, 45000, 15000]
-    );
-    
-    const mockScatter = [];
-    for (let i = 0; i < 200; i++) {
-        mockScatter.push({
-            x: Math.random() * 30,
-            y: Math.random() * 60 + (Math.random() * 30)
+// EVENT LISTENERS
+function initializeEventListeners() {
+    const fareRange = document.getElementById('fareRange');
+    if (fareRange) {
+        fareRange.addEventListener('input', function(e) {
+            const fareValue = document.getElementById('fareValue');
+            if (fareValue) fareValue.textContent = e.target.value;
         });
     }
-    updateScatterChart(mockScatter);
-    
-    updateInsights([
-        {
-            title: '🕐 Peak Rush Hour Pattern',
-            description: 'Trip volume peaks at 8-9 AM and 5-7 PM on weekdays, with 45% higher demand during evening rush hours. Average trip duration increases by 28% during these periods due to traffic congestion.'
-        },
-        {
-            title: '💰 Fare Efficiency Analysis',
-            description: 'Trips under 5 miles show the highest fare-per-mile ratio ($4.20/mi), while longer trips (15+ miles) average $2.10/mi. Night trips (12AM-6AM) command 15% higher fares on average.'
-        },
-        {
-            title: '🚦 Speed Anomaly Detection',
-            description: 'Average speed drops to 8.2 mph during weekday rush hours in Manhattan, compared to 18.5 mph during off-peak hours. Weekend speeds are 32% faster on average.'
-        }
-    ]);
-    
-    showError('Using mock data - backend connection unavailable. Please check API_BASE_URL in app.js');
-}
 
-// ============================================
-// EVENT LISTENERS
-// ============================================
-
-function initializeEventListeners() {
-    document.getElementById('fareRange').addEventListener('input', function(e) {
-        document.getElementById('fareValue').textContent = e.target.value;
-    });
-
-    document.getElementById('distanceRange').addEventListener('input', function(e) {
-        document.getElementById('distanceValue').textContent = e.target.value;
-    });
+    const distanceRange = document.getElementById('distanceRange');
+    if (distanceRange) {
+        distanceRange.addEventListener('input', function(e) {
+            const distanceValue = document.getElementById('distanceValue');
+            if (distanceValue) distanceValue.textContent = e.target.value;
+        });
+    }
     
-    document.getElementById('applyFiltersBtn').addEventListener('click', function() {
+    const applyFiltersBtn = document.getElementById('applyFiltersBtn');
+    if (applyFiltersBtn) applyFiltersBtn.addEventListener('click', function() {
         loadDashboardData();
     });
     
-    document.getElementById('applyDateBtn').addEventListener('click', function() {
+    const applyDateBtn = document.getElementById('applyDateBtn');
+    if (applyDateBtn) applyDateBtn.addEventListener('click', function() {
         loadDashboardData();
     });
     
-    document.getElementById('startDate').addEventListener('keypress', function(e) {
+    const startDateInput = document.getElementById('startDate');
+    if (startDateInput) startDateInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') loadDashboardData();
     });
     
-    document.getElementById('endDate').addEventListener('keypress', function(e) {
+    const endDateInput = document.getElementById('endDate');
+    if (endDateInput) endDateInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') loadDashboardData();
     });
 }
 
-// ============================================
 // INITIALIZATION
-// ============================================
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Initializing NYC Taxi Analytics Dashboard...');
@@ -501,10 +565,7 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('Dashboard initialized successfully!');
 });
 
-// ============================================
 // UTILITY FUNCTIONS FOR BACKEND DEVELOPERS
-// ============================================
-
 window.testAPIConnection = async function() {
     console.log('Testing API connection to:', API_BASE_URL);
     try {
